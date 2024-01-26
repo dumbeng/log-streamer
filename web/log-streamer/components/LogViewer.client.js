@@ -3,18 +3,25 @@ import React, { useState, useEffect, useRef } from 'react';
 import {Button, List, ListItem, Paper, Typography, Box, IconButton, TextField} from '@mui/material';
 import PauseIcon from '@mui/icons-material/Pause';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
+import AnsiToHtml from 'ansi-to-html';
 
+const convert = new AnsiToHtml();
 
 const LogViewer = () => {
   const [logMessages, setLogMessages] = useState([]);
   const [logQueue, setLogQueue] = useState([]);
   const [filter, setFilter] = useState('');
   const [isPaused, setIsPaused] = useState(false);
-  const [maxLogLines, setMaxLogLines] = useState(1000);
+  const [maxLogLines, setMaxLogLines] = useState(200);
   const [ ws, setWs ] = useState(null);
 
   const bottomListRef = useRef(null);
   const lastConnect = useRef(0);
+
+  const formatLogMessage = (msg) => {
+    // 将 ANSI 代码转换为 HTML
+    return convert.toHtml(msg);
+  };
 
   useEffect(() => {
     const connectWebSocket = () => {
@@ -70,11 +77,18 @@ const LogViewer = () => {
 
   useEffect(() => {
     if (!isPaused && logQueue.length > 0) {
-      setLogMessages((prevMessages) => [...prevMessages, ...logQueue]);
+      setLogMessages((prevMessages) => {
+        const updatedMessages = [...prevMessages, ...logQueue];
+        // 如果队列长度超过最大行数，从头部删除
+        if (updatedMessages.length > maxLogLines) {
+          updatedMessages.splice(0, updatedMessages.length - maxLogLines);
+        }
+        return updatedMessages;
+      });
       setLogQueue([]); // 清空队列
       scrollToBottom(); // 滚动到底部
     }
-  }, [logQueue, isPaused]);
+  }, [logQueue, isPaused, maxLogLines]);
 
   const handleFilterChange = (e) => {
     setFilter(e.target.value);
@@ -124,11 +138,11 @@ const LogViewer = () => {
       <Paper className="w-full overflow-y-auto mt-2" style={{ height: 'calc(100vh - 150px)' }}>
         <List className="divide-y divide-gray-200">
           {filteredLogs.map((msg, index) => (
-              <ListItem key={index} className="pr-4">
-                <div className="break-all">{msg}</div>
-              </ListItem>
-          ))}
-          <div ref={bottomListRef}/>
+            <ListItem key={ index } className="pr-4">
+              <div className={'break-all'} dangerouslySetInnerHTML={ { __html: formatLogMessage(msg) } }/>
+            </ListItem>
+          )) }
+          <div ref={ bottomListRef }/>
         </List>
       </Paper>
     </Box>
