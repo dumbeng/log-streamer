@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"flag"
+	"fmt"
 	"github.com/fsnotify/fsnotify"
 	"github.com/gorilla/websocket"
 	log "github.com/sirupsen/logrus"
@@ -146,7 +147,12 @@ func handleMessages(ctx context.Context, watcher *fsnotify.Watcher, logFilePath 
 func main() {
 	// 设置日志文件路径
 	var logFilePath string
+	var host string
+	var port string
+
 	flag.StringVar(&logFilePath, "logfile", "./log.log", "Path to the log file")
+	flag.StringVar(&host, "host", "127.0.0.1", "Host to listen")
+	flag.StringVar(&port, "port", "9211", "Port to listen")
 	flag.Parse()
 
 	// 解析相对路径和绝对路径
@@ -185,8 +191,8 @@ func main() {
 	http.HandleFunc("/ws", handleConnections)
 
 	// 启动HTTP服务器
-	log.Println("HTTP server started on :8080")
-	err = http.ListenAndServe("127.0.0.1:8080", nil)
+	log.Printf("HTTP server started on %s:%s", host, port)
+	err = http.ListenAndServe(fmt.Sprintf("%s:%s", host, port), nil)
 	if err != nil {
 		log.Fatal("ListenAndServe: ", err)
 	}
