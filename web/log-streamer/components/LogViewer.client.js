@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useEffect, useRef } from 'react';
-import {Button, List, ListItem, Paper, Typography, Box, IconButton, TextField} from '@mui/material';
+import { Button, List, ListItem, Paper, Typography, Box, IconButton, TextField } from '@mui/material';
 import PauseIcon from '@mui/icons-material/Pause';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import AnsiToHtml from 'ansi-to-html';
@@ -8,11 +8,11 @@ import AnsiToHtml from 'ansi-to-html';
 const convert = new AnsiToHtml();
 
 const LogViewer = () => {
-  const [logMessages, setLogMessages] = useState([]);
-  const [logQueue, setLogQueue] = useState([]);
-  const [filter, setFilter] = useState('');
-  const [isPaused, setIsPaused] = useState(false);
-  const [maxLogLines, setMaxLogLines] = useState(200);
+  const [ logMessages, setLogMessages ] = useState([]);
+  const [ logQueue, setLogQueue ] = useState([]);
+  const [ filter, setFilter ] = useState('');
+  const [ isPaused, setIsPaused ] = useState(false);
+  const [ maxLogLines, setMaxLogLines ] = useState(200);
   const [ ws, setWs ] = useState(null);
 
   const bottomListRef = useRef(null);
@@ -26,7 +26,7 @@ const LogViewer = () => {
   useEffect(() => {
     const connectWebSocket = () => {
       const wsUrl = process.env.NEXT_PUBLIC_BACKEND_URL;
-      console.log(`Connecting to WebSocket at ${wsUrl}...`)
+      console.log(`Connecting to WebSocket at ${ wsUrl }...`)
       const ws = new WebSocket(wsUrl);
       setWs(ws);
 
@@ -36,7 +36,7 @@ const LogViewer = () => {
 
       ws.onmessage = (event) => {
         setLogQueue((prevQueue) => {
-          const updatedQueue = [...prevQueue, event.data];
+          const updatedQueue = [ ...prevQueue, event.data ];
           // 如果队列长度超过最大行数，从头部删除
           if (updatedQueue.length > maxLogLines) {
             updatedQueue.shift();
@@ -78,7 +78,7 @@ const LogViewer = () => {
   useEffect(() => {
     if (!isPaused && logQueue.length > 0) {
       setLogMessages((prevMessages) => {
-        const updatedMessages = [...prevMessages, ...logQueue];
+        const updatedMessages = [ ...prevMessages, ...logQueue ];
         // 如果队列长度超过最大行数，从头部删除
         if (updatedMessages.length > maxLogLines) {
           updatedMessages.splice(0, updatedMessages.length - maxLogLines);
@@ -88,7 +88,7 @@ const LogViewer = () => {
       setLogQueue([]); // 清空队列
       scrollToBottom(); // 滚动到底部
     }
-  }, [logQueue, isPaused, maxLogLines]);
+  }, [ logQueue, isPaused, maxLogLines ]);
 
   const handleFilterChange = (e) => {
     setFilter(e.target.value);
@@ -112,7 +112,8 @@ const LogViewer = () => {
   return (
     <Box className="flex flex-col items-center justify-center w-full px-4">
       <Typography variant="h4" component="h1" gutterBottom align="center">
-        Real-time Log Viewer
+        Artela Realtime Log Viewer
+        <span className={ `status-indicator ${ !ws ? 'disconnected' : 'connected' }` }></span>
       </Typography>
       <Box style={ { marginBottom: '10px', display: 'flex', gap: '10px', alignItems: 'center' } }>
         <TextField
@@ -131,15 +132,15 @@ const LogViewer = () => {
           type="number"
         />
         <Button variant="contained" color="primary" onClick={ clearLogs }>Clear</Button>
-        <IconButton onClick={handlePauseClick}>
-          {isPaused ? <PlayArrowIcon /> : <PauseIcon />}
+        <IconButton onClick={ handlePauseClick }>
+          { isPaused ? <PlayArrowIcon/> : <PauseIcon/> }
         </IconButton>
       </Box>
-      <Paper className="w-full overflow-y-auto mt-2" style={{ height: 'calc(100vh - 150px)' }}>
+      <Paper className="w-full overflow-y-auto mt-2" style={ { height: 'calc(100vh - 150px)' } }>
         <List className="divide-y divide-gray-200">
-          {filteredLogs.map((msg, index) => (
+          { filteredLogs.map((msg, index) => (
             <ListItem key={ index } className="pr-4">
-              <div className={'break-all'} dangerouslySetInnerHTML={ { __html: formatLogMessage(msg) } }/>
+              <div className={ 'break-all' } dangerouslySetInnerHTML={ { __html: formatLogMessage(msg) } }/>
             </ListItem>
           )) }
           <div ref={ bottomListRef }/>
