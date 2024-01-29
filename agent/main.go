@@ -15,8 +15,8 @@ import (
 )
 
 var (
-	clients  = make(map[*websocket.Conn]*sync.Mutex) // 连接到WebSocket的客户端集合
-	upgrader = websocket.Upgrader{}                  // 用于将HTTP连接升级到WebSocket协议的Upgrader
+	clients  = make(map[*websocket.Conn]struct{}) // 连接到WebSocket的客户端集合
+	upgrader = websocket.Upgrader{}               // 用于将HTTP连接升级到WebSocket协议的Upgrader
 	lock     sync.RWMutex
 )
 
@@ -33,7 +33,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 	defer ws.Close()
 
 	lock.Lock()
-	clients[ws] = &sync.Mutex{}
+	clients[ws] = struct{}{}
 	lock.Unlock()
 
 	log.Infof("new connection from %s", r.RemoteAddr)
@@ -125,17 +125,20 @@ func handleMessages(ctx context.Context, logFilePath string, scanInterval int) {
 				}
 
 				lock.RLock()
-				for client, clientLock := range clients {
-					go func(client *websocket.Conn, clientLock *sync.Mutex, line []byte) {
-						clientLock.Lock()
-						defer clientLock.Unlock()
 
+				var wg sync.WaitGroup
+				wg.Add(len(clients))
+				for client, _ := range clients {
+					go func(client *websocket.Conn, line []byte) {
 						err := client.WriteMessage(websocket.TextMessage, line)
 						if err != nil {
 							log.Errorf("failed to send message to client %s, error: %v", client.RemoteAddr(), err)
 						}
-					}(client, clientLock, []byte(line))
+						wg.Done()
+					}(client, []byte(line))
 				}
+				wg.Wait()
+
 				lock.RUnlock()
 			}
 
