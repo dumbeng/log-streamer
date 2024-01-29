@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 )
 
 var (
@@ -69,73 +70,108 @@ func handleMessages(ctx context.Context, watcher *fsnotify.Watcher, logFilePath 
 	offset := stat.Size()
 	_ = file.Close()
 
+	ticker := time.NewTicker(time.Millisecond * 500)
+	defer ticker.Stop()
+
+	fileModifyEvent := make(chan struct{}, 100)
+
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				close(fileModifyEvent)
+				return
+			case watchEvent, ok := <-watcher.Events:
+				if !ok {
+					return
+				}
+				if watchEvent.Op&fsnotify.Write == fsnotify.Write {
+					select {
+					case <-ticker.C:
+						select {
+						case fileModifyEvent <- struct{}{}:
+						default:
+							log.Errorf("file modify event channel is full")
+							continue
+						}
+					default:
+						log.Debugf("file modify event is throttoled")
+						continue
+					}
+				}
+			}
+		}
+	}()
+
 	for {
 		select {
 		case <-ctx.Done():
 			log.Info("file listener exit")
 			return
-		case event, ok := <-watcher.Events:
+		case _, ok := <-fileModifyEvent:
 			if !ok {
 				return
 			}
-			if event.Op&fsnotify.Write == fsnotify.Write {
-				file, err := os.Open(logFilePath)
-				if err != nil {
-					log.Errorf("failed to read log file, error: %v", err)
-					continue
-				}
 
-				// 获取当前文件大小
-				stat, err := file.Stat()
-				if err != nil {
-					log.Errorf("failed to read file size, error: %v", err)
-					_ = file.Close()
-					continue
-				}
+			// make sure write is done
+			time.Sleep(time.Millisecond * 100)
 
-				log.Debugf("current offset: %d", offset)
-				log.Debugf("current file size: %d", stat.Size())
-
-				fileSize := stat.Size()
-				if fileSize < offset {
-					offset = 0
-				}
-
-				_, err = file.Seek(offset, 0)
-				if err != nil {
-					log.Errorf("failed to seek file at offset %d, error: %v", offset, err)
-					_ = file.Close()
-					continue
-				}
-
-				reader := bufio.NewReader(file)
-				for {
-					line, err := reader.ReadString('\n')
-					if err != nil {
-						log.Infof("file read done: %v", err)
-						break // 文件读取完毕
-					}
-
-					lock.RLock()
-					var wg sync.WaitGroup
-					wg.Add(len(clients))
-					for client, _ := range clients {
-						go func(client *websocket.Conn, line []byte) {
-							err := client.WriteMessage(websocket.TextMessage, line)
-							if err != nil {
-								log.Errorf("failed to send message to client %s, error: %v", client.RemoteAddr(), err)
-							}
-							wg.Done()
-						}(client, []byte(line))
-					}
-					wg.Wait()
-					lock.RUnlock()
-				}
-
-				offset = fileSize
-
-				_ = file.Close()
+			file, err := os.Open(logFilePath)
+			if err != nil {
+				log.Errorf("failed to read log file, error: %v", err)
+				continue
 			}
+
+			// 获取当前文件大小
+			stat, err := file.Stat()
+			if err != nil {
+				log.Errorf("failed to read file size, error: %v", err)
+				_ = file.Close()
+				continue
+			}
+
+			log.Debugf("current offset: %d", offset)
+			log.Debugf("current file size: %d", stat.Size())
+
+			fileSize := stat.Size()
+			if fileSize < offset {
+				offset = 0
+			}
+
+			_, err = file.Seek(offset, 0)
+			if err != nil {
+				log.Errorf("failed to seek file at offset %d, error: %v", offset, err)
+				_ = file.Close()
+				continue
+			}
+
+			reader := bufio.NewReader(file)
+			for {
+				line, err := reader.ReadString('\n')
+				if err != nil {
+					log.Infof("file read done: %v", err)
+					break // 文件读取完毕
+				}
+
+				lock.RLock()
+				var wg sync.WaitGroup
+				wg.Add(len(clients))
+				for client, _ := range clients {
+					go func(client *websocket.Conn, line []byte) {
+						err := client.WriteMessage(websocket.TextMessage, line)
+						if err != nil {
+							log.Errorf("failed to send message to client %s, error: %v", client.RemoteAddr(), err)
+						}
+						wg.Done()
+					}(client, []byte(line))
+				}
+				wg.Wait()
+				lock.RUnlock()
+			}
+
+			offset = fileSize
+
+			_ = file.Close()
 		case err, ok := <-watcher.Errors:
 			if !ok {
 				return
