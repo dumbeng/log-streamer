@@ -112,8 +112,8 @@ const LogViewer = () => {
   return (
     <Box className="flex flex-col items-center justify-center w-full px-4">
       <Typography variant="h4" component="h1" gutterBottom align="center">
-        Artela Realtime Log Viewer
         <span className={ `status-indicator ${ !ws ? 'disconnected' : 'connected' }` }></span>
+        Artela Realtime Log Viewer
       </Typography>
       <Box style={ { marginBottom: '10px', display: 'flex', gap: '10px', alignItems: 'center' } }>
         <TextField
