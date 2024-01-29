@@ -5,13 +5,13 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/fsnotify/fsnotify"
 	"github.com/gorilla/websocket"
 	log "github.com/sirupsen/logrus"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sync"
-	"time"
 )
 
 var (
@@ -52,10 +52,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleMessages 监听日志文件变化并将更新发送给客户端
-func handleMessages(ctx context.Context, logFilePath string, scanInterval int) {
-	ticker := time.NewTicker(time.Duration(scanInterval) * time.Millisecond)
-	defer ticker.Stop()
-
+func handleMessages(ctx context.Context, watcher *fsnotify.Watcher, logFilePath string) {
 	file, err := os.Open(logFilePath)
 	if err != nil {
 		log.Errorf("failed to read log file, error: %v", err)
@@ -69,7 +66,7 @@ func handleMessages(ctx context.Context, logFilePath string, scanInterval int) {
 		return
 	}
 
-	lastSize := stat.Size()
+	offset := stat.Size()
 	_ = file.Close()
 
 	for {
@@ -77,74 +74,73 @@ func handleMessages(ctx context.Context, logFilePath string, scanInterval int) {
 		case <-ctx.Done():
 			log.Info("file listener exit")
 			return
-		case <-ticker.C:
-			file, err := os.Open(logFilePath)
-			if err != nil {
-				log.Errorf("failed to read log file, error: %v", err)
-				continue
+		case event, ok := <-watcher.Events:
+			if !ok {
+				return
 			}
-
-			// 获取当前文件大小
-			stat, err := file.Stat()
-			if err != nil {
-				log.Errorf("failed to read file size, error: %v", err)
-				_ = file.Close()
-				continue
-			}
-
-			offset := int64(0)
-			currentSize := stat.Size()
-			if currentSize == lastSize {
-				// no new content
-				log.Infof("no new content")
-				_ = file.Close()
-				continue
-			} else if currentSize < lastSize {
-				// log file rotated, need to restart
-				offset = 0
-			} else {
-				offset = lastSize
-			}
-
-			log.Debugf("current offset: %d", offset)
-			log.Debugf("current file size: %d", stat.Size())
-
-			_, err = file.Seek(offset, 0)
-			if err != nil {
-				log.Errorf("failed to seek file at offset %d, error: %v", offset, err)
-				_ = file.Close()
-				continue
-			}
-
-			reader := bufio.NewReader(file)
-			for {
-				line, err := reader.ReadString('\n')
+			if event.Op&fsnotify.Write == fsnotify.Write {
+				file, err := os.Open(logFilePath)
 				if err != nil {
-					log.Infof("file read done: %v", err)
-					break // 文件读取完毕
+					log.Errorf("failed to read log file, error: %v", err)
+					continue
 				}
 
-				lock.RLock()
-
-				var wg sync.WaitGroup
-				wg.Add(len(clients))
-				for client, _ := range clients {
-					go func(client *websocket.Conn, line []byte) {
-						err := client.WriteMessage(websocket.TextMessage, line)
-						if err != nil {
-							log.Errorf("failed to send message to client %s, error: %v", client.RemoteAddr(), err)
-						}
-						wg.Done()
-					}(client, []byte(line))
+				// 获取当前文件大小
+				stat, err := file.Stat()
+				if err != nil {
+					log.Errorf("failed to read file size, error: %v", err)
+					_ = file.Close()
+					continue
 				}
-				wg.Wait()
 
-				lock.RUnlock()
+				log.Debugf("current offset: %d", offset)
+				log.Debugf("current file size: %d", stat.Size())
+
+				fileSize := stat.Size()
+				if fileSize < offset {
+					offset = 0
+				}
+
+				_, err = file.Seek(offset, 0)
+				if err != nil {
+					log.Errorf("failed to seek file at offset %d, error: %v", offset, err)
+					_ = file.Close()
+					continue
+				}
+
+				reader := bufio.NewReader(file)
+				for {
+					line, err := reader.ReadString('\n')
+					if err != nil {
+						log.Infof("file read done: %v", err)
+						break // 文件读取完毕
+					}
+
+					lock.RLock()
+					var wg sync.WaitGroup
+					wg.Add(len(clients))
+					for client, _ := range clients {
+						go func(client *websocket.Conn, line []byte) {
+							err := client.WriteMessage(websocket.TextMessage, line)
+							if err != nil {
+								log.Errorf("failed to send message to client %s, error: %v", client.RemoteAddr(), err)
+							}
+							wg.Done()
+						}(client, []byte(line))
+					}
+					wg.Wait()
+					lock.RUnlock()
+				}
+
+				offset = fileSize
+
+				_ = file.Close()
 			}
-
-			offset = currentSize
-
-			_ = file.Close()
+		case err, ok := <-watcher.Errors:
+			if !ok {
+				return
+			}
+			log.Errorf("file listening error: %v\n", err)
 		}
 	}
 }
@@ -154,12 +150,10 @@ func main() {
 	var logFilePath string
 	var host string
 	var port string
-	var scanInterval int
 
 	flag.StringVar(&logFilePath, "logfile", "./log.log", "Path to the log file")
 	flag.StringVar(&host, "host", "127.0.0.1", "Host to listen")
 	flag.StringVar(&port, "port", "9211", "Port to listen")
-	flag.IntVar(&scanInterval, "interval", 500, "Interval to scan the file")
 	flag.Parse()
 
 	// 解析相对路径和绝对路径
@@ -176,11 +170,23 @@ func main() {
 		TimestampFormat:  "2006-01-02 15:04:05.233",
 	})
 
+	// 设置文件监控
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer watcher.Close()
+
+	err = watcher.Add(logFilePath)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	// 启动WebSocket服务
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go handleMessages(ctx, logFilePath, scanInterval)
+	go handleMessages(ctx, watcher, logFilePath)
 
 	// 设置路由
 	http.HandleFunc("/ws", handleConnections)
